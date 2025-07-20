@@ -1,3 +1,8 @@
+//! Example of deriving `HeapSize` for a struct.
+//! 
+//! Provides examples of: 
+//! * specializing rules_derive to structs.
+//! * accessing struct fields by name, rather than by pattern matching.
 use rules_derive::rules_derive;
 use rules_derive::with_spans;
 
@@ -8,7 +13,7 @@ pub trait HeapSize {
 macro_rules! HeapSize {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis struct $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis /* require a struct */ struct $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
       $variant_name:ident $variant:tt {
         $(
           $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
@@ -20,10 +25,11 @@ macro_rules! HeapSize {
       impl $($generics_bindings)* $crate::HeapSize for $ty where
         $($generics_where)*
         $(
-          spanned!($fieldnameident => $fieldty: $crate::HeapSize,)
+          spanned!($fieldty => $fieldty: $crate::HeapSize,)
         )*
       {
         fn heap_size(&self) -> usize {
+          // It's known to be a struct so we can directly access the field names.
           $(
             self.$fieldname.heap_size()
             +

@@ -1,6 +1,6 @@
-#![allow(deprecated)] // For testing the #[deprecated] attribut.
 //! Demonstrates how to implement deriving for our own custom variants of Clone
 //! and Eq.
+#![allow(deprecated)] // For testing the #[deprecated] attribut.
 
 use rules_derive::make_ident;
 use rules_derive::rules_derive;
@@ -32,7 +32,7 @@ macro_rules! CustomEq {
         $($generics_where)*
         $(
           $(
-            spanned!($fieldnameident => $fieldty: $crate::CustomEq,)
+            spanned!($fieldty => $fieldty: $crate::CustomEq,)
           )*
         )*
       {
@@ -79,7 +79,7 @@ macro_rules! CustomClone {
         $($generics_where)*
         $(
           $(
-            spanned!($fieldnameident => $fieldty: $crate::CustomClone,)
+            spanned!($fieldty => $fieldty: $crate::CustomClone,)
           )*
         )*
       {
@@ -97,9 +97,11 @@ macro_rules! CustomClone {
   }
 }
 
+
 // The deriving works out of the box with all kinds of exotic types, including
-// generics. In fact, we give a better type to the generics than what Rust's
-// default deriving does.
+// generics. In fact, we give a "better" type to the generics than what Rust's
+// default deriving does, i.e. we constrain the field types rather than the
+// generic parameters. (Whether this is truly better is a debated topic in Rust).
 
 #[rules_derive(CustomEq, CustomClone)]
 #[repr(transparent)]
@@ -225,8 +227,7 @@ impl CustomClone for u16 {
   fn custom_clone(&self) -> Self { *self }
 }
 
-#[test]
-fn test_eq() {
+fn main() {
   assert!(DiscriminantEnum::A
     .custom_clone()
     .custom_eq(&DiscriminantEnum::A));

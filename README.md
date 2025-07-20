@@ -1,2 +1,2 @@
-# rules_derive
-Simple and fast derive macros using macro_rules!()
+# rules_derive: simple and fast derive macros using `macro_rules!()`
+

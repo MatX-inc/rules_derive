@@ -1,88 +1,69 @@
 //! This library allows you to define custom deriving instances using
 //! `macro_rules!` macros rather than proc-macros. This is often much simpler.
-//!
-//! To define a custom deriving instance using this library:
-//!
+//! 
+//! # Getting started
+//! 
+//! Define a deriving macro with `macro_rules!()`:
+//! 
 //! ```ignore
-//! // Define a macro that accepts a simplified form of the type definition as its argument.
-//! macro_rules! Foo {
-//!   /* ... see `rules_derive` for definition of signature ... */
+//! macro_rules! MyTrait {
+//!   (/* see `rules_derive` for definition of signature */) => {
+//!     // Generate impl
+//!     impl $($generics_bindings)* MyTrait for $ty where $($generics_where)* {
+//!       // implementation here
+//!     }
+//!   }
 //! }
-//!
-//! // Use the macro on your types:
-//! #[rules_derive(Foo, Bar, Baz)]
-//! struct MyType { ... }
 //! ```
-//!
-//! For a complete example, see `tests/custom_clone_and_eq.rs`, which
-//! provides deriving instances for custom equivalents of `Clone` and `Eq`. As a
-//! nice bonus, the derived instances have _better_ type signatures than Rust's
-//! default instances in the presence of phantom types (`PhantomData`).
-//!
-//! # Features
-//!
-//! This library provides the following functionality, which you would typically
-//! need to implement yourself when writing a traditional `#[derive(Foo)]`
-//! proc-macro:
-//!
-//! 1. You don't need to write a proc macro. Writing proc macros adds some
-//!    boilerplate, since you need to set up a separate crate, or often two
-//!    separate crates since proc macros cannot be written in the same crate as
-//!    non-macro exports.
-//!
-//! 2. Traditionally you'd need to write code to handle each of the six kinds of
-//!    type definition:
-//!     * unit structs: `struct Foo;`
-//!     * tuple structs: `struct Foo(u32, u32);`
-//!     * named-field structs: `struct Foo { x: u32, y: u32 }`
-//!     * unit enum variants: `enum Foo { A, B, C }`
-//!     * tuple enum variants: `enum Foo { A(u32), B(), C(u32, u32) }
-//!     * named-field enum variants: `enum Foo { A { x: u32, y: u32 }, B, C { x:
-//!       u32, y: u32 } }`
-//!
-//!     This library takes care of this for you, by canonicalizing all of these
-//!     different syntaxes into a single sum-of-products representation.
-//!
-//! 3. Traditionally you'd need to parse the type's generic arguments and
-//!    generate a few variants for different uses. For example, given a type
-//!    definition  ```ignore struct GenericStruct<T: Copy = u8, const N: usize>
-//!    { ... } ```
-//!
-//!    you'd need to generate an `impl` header like the following:
-//!
-//!    ```ignore
-//!    impl<T: Copy, const N: usize> Foo for GenericStruct<T, N> { ... }
-//!    ```
-//!
-//!    This library takes care of this for you, generating a syntax tree for
-//!    the fully-applied type `GenericStruct<T, N>` as well as the impl
-//!    bindings `<T: Copy, const N: usize>`.
-//!
-//! Relative to writing a `derive_Foo! { struct MyType { ... } }` macro, this
-//! library provides the following advantages:
-//!
-//! 4. Generics are supported. Generic type signatures are extremely difficult
-//!    to parse directly in `macro_rules!` macros, and so most `derive_Foo!()`
-//!    macros don't support them. With this library, they're straightforward to
-//!    support.
-//!
-//! 5. Multiple traits can be derived for a single type. Typically `derive_Foo!
-//!    { derive_Bar! { struct MyType { ...} } }` is not supported, but with this
-//!    library you can write
-//!
-//!     ```ignore
-//!     #[rules_derive(Foo, Bar)]
-//!     struct MyType { ... }
-//!     ```
-//!    without any issues.
-//!
-//! # Comparison
-//!
-//! The most similar library to this is `synstructure`, which is aimed at
-//! features (2) and (3) but not (1). As an additional issue with
-//! `synstructure`, I found that `synstructure` automates _too much_ of the
-//! definition of an impl's header, such that it often ends up generating a bad
-//! signature in the presence of generics and phantom types.
+//! 
+//! Then use it under the `rules_derive` attribute:
+//! 
+//! ```ignore
+//! #[rules_derive(MyTrait)]
+//! struct MyType { x: u32, y: String }
+//! ```
+//! 
+//! The macro definition can be in the same crate or file as its use.
+//! 
+//! See full examples [in the `examples` directory](https://github.com/MatX-inc/rules_derive/tree/main/examples).
+//! 
+//! # Tutorial
+//! 
+//! See the [announcement blog post](http://matx.com/research/rules_derive) for a tutorial.
+//! 
+//! # Parsed syntax
+//! 
+//! The `rules_derive` macro parses any `enum`/`struct` definition into a simpler-to-parse format, which it then
+//! passes to your macro. The primary transformations it does are:
+//! 
+//! * Convert all enum/struct syntaxes and named-field/unnamed-field/unit syntaxes into a uniform sum-of-products
+//!   syntax.
+//! * Convert any generic parameters in the typical ways needed for `impl` headers.
+//! 
+//! The motivation for these transformations is given in the [announcement blog post](http://matx.com/research/rules_derive).
+//! Here is an example of the effect of this transformation:
+//! 
+//! ```ignore
+//! // Rust type definition:
+//! #[rustfmt::skip]
+//! pub enum Foo<T: Clone = u8> where u8: Into<T> { 
+//!     A { x: T },
+//!     B,
+//!     C(u8),
+//! }
+//! 
+//! // rules_derive-transformed type definition:
+//! ((#[rustfmt::skip])) 
+//! pub enum Foo((Foo<T>) (<T: Clone>) where (u8: Into<T>,))
+//! {
+//!     A(named Foo::A) { field__x @ x : T, } 
+//!     B(unit Foo::B) {}
+//!     C(unnamed Foo::C) { field__0 @ 0 : u8, }
+//! }
+//! ```
+//! 
+//! This transformed type definition is then passed to your macro. You can see the `macro_rules!` header
+//! that accepts this transformed type definition on the [`rules_derive`] documentation.
 
 use proc_macro::Delimiter;
 use proc_macro::Group;
@@ -95,14 +76,13 @@ use parsing::*;
 /// Provides `#[rules_derive(Foo, Bar)]` to derive `Foo` and `Bar` for a struct
 /// or enum.
 ///
-/// Each derivable trait must be implemented by a macro named `Foo`, which
+/// Each derivable trait must be implemented by a macro named e.g. `Foo`, which
 /// should accept the following protocol. You typically want to copy-paste this
 /// header. You may also accept specalizations of the protocol, e.g. removing
 /// some of the repetitions (to specialize for a specific number of fields or
 /// variants) or specializing `$tystyle` to `struct` or `enum`.
 ///
-/// TODO: remove redundant parens around (a) attr:tt, (b) `ty, generics_bindings
-/// where generics_where``.
+/// TODO: remove redundant parens around (a) attr:tt, (b) `ty, generics_bindings where generics_where`.
 ///
 /// The full protocol:
 ///
@@ -122,6 +102,29 @@ use parsing::*;
 ///   ) => { ... }
 /// }
 /// ```
+/// 
+/// Here is an example of a Rust type definition being transformed into this protocol:
+/// 
+/// Here is an example of the effect of this transformation:
+/// 
+/// ```ignore
+/// // Rust type definition:
+/// #[rustfmt::skip]
+/// pub enum Foo<T: Clone = u8> where u8: Into<T> { 
+///     A { x: T },
+///     B,
+///     C(u8),
+/// }
+/// 
+/// // rules_derive-transformed type definition:
+/// ((#[rustfmt::skip])) 
+/// pub enum Foo((Foo<T>) (<T: Clone>) where (u8: Into<T>,))
+/// {
+///     A(named Foo::A) { field__x @ x : T, } 
+///     B(unit Foo::B) {}
+///     C(unnamed Foo::C) { field__0 @ 0 : u8, }
+/// }
+/// ```
 ///
 /// If parameters are provided to the rules_derive macro name in parentheses,
 /// square brackets, or curly braces (e.g. `rules_derive(Iterator(Item = (I, &'a
@@ -138,9 +141,7 @@ use parsing::*;
 /// }
 /// ```
 ///
-/// See `tests/custom_clone_and_eq.rs` and `examples/heap_size.rs` for examples;
-/// see `Iterator` in `common/src/derives.rs` for an example of using
-/// additional parameters.
+/// See full examples [in the `examples` directory](https://github.com/MatX-inc/rules_derive/tree/main/examples).
 #[proc_macro_attribute]
 pub fn rules_derive(attr: TokenStream, item: TokenStream) -> TokenStream {
   let mut result = vec![
@@ -447,6 +448,8 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
 }
 
 /// Creates an identifier from the concatenation of identifiers and literals.
+/// 
+/// For example, `make_ident!(foo, "bar", 123)` becomes `foobar123`.
 #[proc_macro]
 pub fn make_ident(item: TokenStream) -> TokenStream { render_macro_result(make_ident_inner(item)) }
 
@@ -477,16 +480,12 @@ fn make_ident_inner(item: TokenStream) -> Result<TokenStream> {
 ///
 /// Within the scope of an outer `with_spans!(...)` invocation, you may use
 /// `spanned!(foo => tokens...)` to cause the `tokens...` to be annotated with
-/// the source location attached to `foo`. See `tests/custom_clone_and_eq.rs`
-/// and `examples/heap_size.rs`. The `foo` is required to be an identifier, to
-/// avoid surprising span attributions that often arise from other syntax
-/// structures.
+/// the source location attached to `foo`. The `foo` must be a single token-tree.
 ///
 /// The most common use case is to attribute missing instances in a
 /// `rules_derive` macro to a particular field of the source type. For this use
-/// case, you should use the `$fieldnameident` token as the source span to
-/// attach to: the `$fieldnameident` token has been set up with a source
-/// span that points to the entire field definition.
+/// case, you should use the `$fieldty` token-tree as the source span to
+/// attach to.
 ///
 /// Why provide `with_spans!(...)` as a proc macro instead of directly providing
 /// `spanned!(...)` as a proc macro? Because the latter is too restrictive: Rust
