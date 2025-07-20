@@ -84,6 +84,7 @@
 //! definition of an impl's header, such that it often ends up generating a bad
 //! signature in the presence of generics and phantom types.
 
+use proc_macro::Delimiter;
 use proc_macro::Group;
 use proc_macro::Ident;
 use proc_macro::TokenStream;
@@ -524,18 +525,59 @@ fn process_stream(
       stream.must_next(); // !
       if let TokenTree::Group(group) = stream.must_next() {
         let mut inner_stream = ParseState::new(group.stream().into_iter());
-
-        if let Ok(TokenTree::Ident(span_ident)) = inner_stream.next() {
+        if let Ok(mut spanned_tt) = inner_stream.next() {
+          // Look inside arbitrarily many outer nests of {} or invisible groups.
+          //
+          // macro_rules!() matching introduces invisible groups on metavariables such as
+          // ty/expr, which groups together multiple tokens. We also allow users
+          // to group together multiple spanned tokens with {} delimiters. In both
+          // cases we want to see inside these layers of delimiters to get the spans of
+          // the underlying tokens.
+          let inner_span;
+          loop {
+            if let TokenTree::Group(g) = &spanned_tt {
+              if matches!(g.delimiter(), Delimiter::None | Delimiter::Brace) {
+                let mut delimiter_contents = g.stream().into_iter();
+                let first = delimiter_contents.next();
+                let last = delimiter_contents.fold(None, |_prev, next| Some(next));
+                match (first, last) {
+                  (Some(first), Option::None) => {
+                    // There's just a single token. Recurse inside to check if that itself is a
+                    // delimiter that we might look through.
+                    spanned_tt = first;
+                    continue;
+                  }
+                  (Some(first), Some(last)) => {
+                    // Multiple tokens inside. Use them to set the span and then stop recursing.
+                    #[cfg(feature = "nightly")]
+                    {
+                      inner_span = first.span().join(last.span());
+                    }
+                    #[cfg(not(feature = "nightly"))]
+                    {
+                      inner_span = first.span();
+                      _ = last;
+                    }
+                    break;
+                  }
+                  _ => {
+                    // No tokens inside. Stop recursing.
+                  }
+                }
+              }
+            }
+            inner_span = spanned_tt.span();
+            break;
+          }
           if inner_stream.peek_punct(0, b"=>") {
             inner_stream.must_next(); // =
             inner_stream.must_next(); // >
-            let inner_span = span_ident.span();
             process_stream(Some(inner_span), inner_stream, dst)?;
             continue 'token_loop;
           }
         }
       }
-      return stream.error(&"spanned!() must match syntax spanned!($span_ident:ident => ...)");
+      return stream.error(&"spanned!() must match syntax spanned!($span:tt => ...)");
     }
     dst.push(process_tree(span, stream.must_next())?);
   }
