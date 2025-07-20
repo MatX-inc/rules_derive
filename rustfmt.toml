@@ -1,0 +1,8 @@
+wrap_comments = true
+edition = "2021"
+format_code_in_doc_comments = true
+imports_granularity = "Item"  # Minimizes merge conflicts
+group_imports = "StdExternalCrate"
+overflow_delimited_expr = true  # Shorter, harmless
+tab_spaces = 2  # Smaller indentation triangles
+fn_single_line = true  # Shorter, harmless
