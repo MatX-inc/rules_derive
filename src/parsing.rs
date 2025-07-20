@@ -66,11 +66,14 @@ impl ParseState {
 
   /// Returns an error with span of the next token.
   pub(crate) fn error<T>(&self, msg: &'static &'static str) -> Result<T> {
-    let span = self.peeks[0]
-      .as_ref()
-      .map(|t| t.span())
-      .unwrap_or(self.last_span);
-    Err(Msg(span, msg))
+    Err(Msg(self.span(), msg))
+  }
+
+  pub(crate) fn span(&self) -> Span {
+    self.peeks[0]
+    .as_ref()
+    .map(|t| t.span())
+    .unwrap_or(self.last_span)
   }
 
   pub(crate) fn peek_ident(&self, n: usize, expected_ident: &str) -> bool {
@@ -155,6 +158,10 @@ pub(crate) fn render_macro_result(result: Result<TokenStream>) -> TokenStream {
   })
 }
 
+pub(crate) fn with_span(s: Span, mut t: TokenTree) -> TokenTree {
+  t.set_span(s);
+  t
+}
 pub(crate) fn ident(s: &str) -> TokenTree {
   TokenTree::Ident(Ident::new(s, proc_macro::Span::call_site()))
 }

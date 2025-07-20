@@ -270,7 +270,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
             // StructStruct → ... { StructFields? }
             let fields = parse_named_fields(group.stream())?;
             variants.push(type_name.clone());
-            variants.push(parens([ident("named"), type_name.clone()]));
+            variants.push(parens([with_span(group.span_open(), ident("named")), type_name.clone()]));
             variants.push(braces(fields));
           }
           TyStyle::Enum => {
@@ -287,7 +287,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
               let variant_name = input_variants.next()?; // IDENTIFIER
               let (variant_metadata, fields) =
                 if let Some(TokenTree::Group(_)) = &input_variants.peeks[0] {
-                  let TokenTree::Group(enum_item) = input_variants.next()? else {
+                  let TokenTree::Group(enum_item) = input_variants.must_next() else {
                     unreachable!()
                   };
                   match enum_item.delimiter() {
@@ -300,7 +300,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
                       //   )*
                       // }
                       let variant_metadata = parens([
-                        ident("unnamed"),
+                        with_span(enum_item.span(), ident("unnamed")),
                         type_name.clone(),
                         punct_joint(':'),
                         punct(':'),
@@ -318,7 +318,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
                       //   )*
                       // }
                       let variant_metadata = parens([
-                        ident("named"),
+                        with_span(enum_item.span(), ident("named")),
                         type_name.clone(),
                         punct_joint(':'),
                         punct(':'),
@@ -334,7 +334,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
                 } else {
                   // Unit variant.
                   let variant_metadata = parens([
-                    ident("unit"),
+                    with_span(input_variants.span(), ident("unit")),
                     type_name.clone(),
                     punct_joint(':'),
                     punct(':'),
@@ -377,7 +377,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
           //   )*
           // }
           variants.push(type_name.clone()); // $variant_name
-          variants.push(parens([ident("unnamed"), type_name.clone()]));
+          variants.push(parens([with_span(group.span_open(), ident("unnamed")), type_name.clone()]));
           variants.push(braces(parse_unnamed_fields(group.stream())?));
           parse_where_clause(&mut item, &mut generics_where)?;
           item.next()?; // ';'
@@ -393,7 +393,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
       }
       // Unit struct.
       variants.push(type_name.clone()); // $variant_name
-      variants.push(parens([ident("unit"), type_name.clone()]));
+      variants.push(parens([with_span(punct.span(), ident("unit")), type_name.clone()]));
       variants.push(braces([]));
     }
     _ => return item.error(&"Parse error"),
