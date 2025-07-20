@@ -412,7 +412,7 @@ pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
     skip_outer_attributes(&mut input)?;
     parse_visibility(&mut input, &mut result);
     let field_name = input.next()?; // IDENTIFIER
-    let field_name_ident = Ident::new(&format!("f_{}", field_name), Span::call_site());
+    let field_name_ident = Ident::new(&format!("__field_{}", field_name), Span::call_site());
     result.push(TokenTree::Ident(field_name_ident)); // $fieldnameident:ident
     result.push(punct('@')); // @
     result.push(field_name); // $fieldname:tt
@@ -451,7 +451,7 @@ pub(crate) fn parse_unnamed_fields(input: TokenStream) -> Result<Vec<TokenTree>>
     // TODO: attrs.
     skip_outer_attributes(&mut input)?;
     parse_visibility(&mut input, &mut result);
-    let field_name_ident = Ident::new(&format!("tuple_field_{}", field_index), Span::call_site());
+    let field_name_ident = Ident::new(&format!("__field_{}", field_index), Span::call_site());
     result.push(TokenTree::Ident(field_name_ident)); // $fieldnameident:ident
     result.push(punct('@')); // @
     result.push(TokenTree::Literal(Literal::usize_unsuffixed(field_index))); // $fieldname:tt
