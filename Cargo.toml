@@ -2,6 +2,13 @@
 name = "rules_derive"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "simple and fast derive macros using macro_rules"
+repository = "https://github.com/MatX-inc/rules_derive"
+keywords = ["macros", "derive"]
+categories = ["development-tools::procedural-macro-helpers"]
+readme = "README.md"
+
 
 [lib]
 proc-macro = true
