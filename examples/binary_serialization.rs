@@ -38,7 +38,7 @@ impl_integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 macro_rules! BinarySerializable {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -49,7 +49,7 @@ macro_rules! BinarySerializable {
     }
   ) => {
     ::rules_derive::with_spans! {
-      impl $($generics_bindings)* $crate::BinarySerializable for $ty where
+      impl $(< $($generics_bindings)* >)? $crate::BinarySerializable for $ty where
         $($generics_where)*
         $(
           $(
