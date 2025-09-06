@@ -269,11 +269,15 @@ pub(crate) fn parse_where_clause(
     })?;
     // Ensure generics_where can be concatenated with other where clauses. If it's
     // nonempty, it must end in a comma.
-    if result.len() > result_len && !is_punct(&result[result.len() - 1], ',') {
-      result.push(punct(','));
-    }
+    ensure_trailing_comma_if_nonempty(result, result_len);
   }
   Ok(())
+}
+
+fn ensure_trailing_comma_if_nonempty(result: &mut Vec<TokenTree>, start_position: usize) {
+  if result.len() > start_position && !is_punct(&result[result.len() - 1], ',') {
+    result.push(punct(','));
+  }
 }
 
 /// Parse `GenericParams?`. We want to produce the following token streams:
@@ -292,13 +296,17 @@ pub(crate) fn parse_generics(
     // GenericParams → < ( GenericParam ( , GenericParam )* ,? )? >
     let open_lt = input.next()?; // '<'
     type_tokens.push(open_lt.clone());
-    generics_bindings.push(open_lt);
 
     loop {
       if input.peek_punct(0, b">") {
         let close_gt = input.next()?; // '>'
         type_tokens.push(close_gt.clone());
-        generics_bindings.push(close_gt);
+        ensure_trailing_comma_if_nonempty(&mut generics_bindings, 0);
+        generics_bindings = vec![
+          open_lt,
+          parens(generics_bindings),
+          close_gt,
+        ];
         break;
       }
 

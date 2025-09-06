@@ -13,7 +13,7 @@ pub trait HeapSize {
 macro_rules! HeapSize {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis /* require a struct */ struct $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis /* require a struct */ struct $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $variant_name:ident $variant:tt {
         $(
           $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
@@ -22,7 +22,7 @@ macro_rules! HeapSize {
     }
   ) => {
     with_spans!{
-      impl $($generics_bindings)* $crate::HeapSize for $ty where
+      impl $(< $($generics_bindings)* >)? $crate::HeapSize for $ty where
         $($generics_where)*
         $(
           spanned!($fieldty => $fieldty: $crate::HeapSize,)

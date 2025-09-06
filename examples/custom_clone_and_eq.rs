@@ -17,7 +17,7 @@ pub trait CustomClone {
 macro_rules! CustomEq {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -28,7 +28,7 @@ macro_rules! CustomEq {
     }
   ) => {
     with_spans! {
-      impl $($generics_bindings)* $crate::CustomEq for $ty where
+      impl $(< $($generics_bindings)* >)? $crate::CustomEq for $ty where
         $($generics_where)*
         $(
           $(
@@ -64,7 +64,7 @@ macro_rules! CustomEq {
 macro_rules! CustomClone {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -75,7 +75,7 @@ macro_rules! CustomClone {
     }
   ) => {
     with_spans! {
-      impl $($generics_bindings)* $crate::CustomClone for $ty where
+      impl $(< $($generics_bindings)* >)? $crate::CustomClone for $ty where
         $($generics_where)*
         $(
           $(
