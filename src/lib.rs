@@ -82,7 +82,7 @@ use parsing::*;
 /// some of the repetitions (to specialize for a specific number of fields or
 /// variants) or specializing `$tystyle` to `struct` or `enum`.
 ///
-/// TODO: remove redundant parens around (a) attr:tt, (b) `ty, generics_bindings where generics_where`.
+/// TODO: remove redundant parens around attr:tt.
 ///
 /// The full protocol:
 ///
@@ -90,7 +90,7 @@ use parsing::*;
 /// macro_rules! Foo {
 ///   (
 ///     ($( ($($attr:tt)*) )*)
-///     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+///     $vis:vis $tystyle:ident $name:ident ($ty:ty) $( <( $($generics_bindings:tt)* )> )? where ($($generics_where:tt)*) {
 ///       $(
 ///         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
 ///           $(
@@ -118,7 +118,7 @@ use parsing::*;
 /// 
 /// // rules_derive-transformed type definition:
 /// ((#[rustfmt::skip])) 
-/// pub enum Foo((Foo<T>) (<T: Clone>) where (u8: Into<T>,))
+/// pub enum Foo(Foo<T>) <(T: Clone,)> where (u8: Into<T>,)
 /// {
 ///     A(named Foo::A) { field__x @ x : T, } 
 ///     B(unit Foo::B) {}
@@ -399,12 +399,10 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
     }
     _ => return item.error(&"Parse error"),
   }
-  description.push(parens([
-    parens(ty),
-    parens(generics_bindings),
-    ident("where"),
-    parens(generics_where),
-  ]));
+  description.push(parens(ty));
+  description.extend(generics_bindings);
+  description.push(ident("where"));
+  description.push(parens(generics_where));
   description.push(braces(variants));
 
   // Parse `#[rules_derive(Foo(...), Bar)]` attribute.

@@ -10,7 +10,7 @@ pub trait EnumFromString: Sized {
 macro_rules! EnumFromString {
   (
     $attrs:tt
-    $vis:vis /* require enum */ enum $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis /* require enum */ enum $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $(
         $variant_name:ident (/* require unit variant */ unit $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           // We deliberately don't accept any fields. These matchers are elided:
@@ -21,7 +21,7 @@ macro_rules! EnumFromString {
       )*
     }
   ) => {
-    impl $($generics_bindings)* $crate::EnumFromString for $ty where $($generics_where)*
+    impl $(< $($generics_bindings)* >)? $crate::EnumFromString for $ty where $($generics_where)*
     {
       fn from_str(x: &str) -> ::std::option::Option<Self> {
         // We create named constants for each variant name, to allow us to use a `match` expression.

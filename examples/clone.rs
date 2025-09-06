@@ -3,7 +3,7 @@ use rules_derive::rules_derive;
 macro_rules! Clone {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) where ($($generics_where:tt)*)) {
+    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -14,7 +14,7 @@ macro_rules! Clone {
     }
   ) => {
     ::rules_derive::with_spans! {
-      impl $($generics_bindings)* ::std::clone::Clone for $ty where
+      impl $(< $($generics_bindings)* >)? ::std::clone::Clone for $ty where
         $($generics_where)*
         $(
           $(
