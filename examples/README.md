@@ -18,6 +18,7 @@ More advanced examples:
 * [binary_serialization.rs](binary_serialization.rs). Example of serializing/deserializing a type to/from `Vec<u8>`. Provides examples of:
   * how to assign sequential numbers to variants.
 * [custom_clone_and_eq.rs](custom_clone_and_eq.rs). Examples for custom `Eq` and `Clone` traits. Used primarily for testing `rules_derive`'s internal parser.
+* [newtype_from.rs](newtype_from.rs). Examples of defining an `impl` that has additional generic parameters beyond what the type itself has.
 
 You can test all examples with:
 
