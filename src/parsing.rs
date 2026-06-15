@@ -71,9 +71,9 @@ impl ParseState {
 
   pub(crate) fn span(&self) -> Span {
     self.peeks[0]
-    .as_ref()
-    .map(|t| t.span())
-    .unwrap_or(self.last_span)
+      .as_ref()
+      .map(|t| t.span())
+      .unwrap_or(self.last_span)
   }
 
   pub(crate) fn peek_ident(&self, n: usize, expected_ident: &str) -> bool {
@@ -253,15 +253,11 @@ pub(crate) fn parse_where_clause(
     let result_len = result.len();
     parse_typelike(input, result, |input| {
       match &input.peeks[0] {
-        Some(TokenTree::Group(group)) => {
-          if group.delimiter() == proc_macro::Delimiter::Brace {
-            return true;
-          }
+        Some(TokenTree::Group(group)) if group.delimiter() == proc_macro::Delimiter::Brace => {
+          return true;
         }
-        Some(TokenTree::Punct(punct)) => {
-          if punct.as_char() == ';' {
-            return true;
-          }
+        Some(TokenTree::Punct(punct)) if punct.as_char() == ';' => {
+          return true;
         }
         _ => {}
       }
@@ -284,11 +280,14 @@ fn ensure_trailing_comma_if_nonempty(result: &mut Vec<TokenTree>, start_position
 ///  1) `type_tokens`: Generics without bounds or defaults, for instantiating
 ///     the type itself.
 ///  2) `generics_bindings`: Generics without defaults, for declaring generics
-///     in impls.
+///     in impls. Includes the surrounding `<` and `>`.
+///  3) `generics_inner`: Same content as `generics_bindings` but WITHOUT the
+///     surrounding `<` and `>`. Useful for injecting extra generic parameters
+///     into an impl, e.g. `impl<ExtraParam, $($generics_inner)*> ...`.
 pub(crate) fn parse_generics(
   input: &mut ParseState,
   name: &TokenTree,
-) -> Result<(Vec<TokenTree>, Vec<TokenTree>)> {
+) -> Result<(Vec<TokenTree>, Vec<TokenTree>, Vec<TokenTree>)> {
   let mut type_tokens: Vec<TokenTree> = vec![name.clone()];
 
   let mut generics_bindings: Vec<TokenTree> = Vec::new();
@@ -296,17 +295,13 @@ pub(crate) fn parse_generics(
     // GenericParams → < ( GenericParam ( , GenericParam )* ,? )? >
     let open_lt = input.next()?; // '<'
     type_tokens.push(open_lt.clone());
+    generics_bindings.push(open_lt);
 
     loop {
       if input.peek_punct(0, b">") {
         let close_gt = input.next()?; // '>'
         type_tokens.push(close_gt.clone());
-        ensure_trailing_comma_if_nonempty(&mut generics_bindings, 0);
-        generics_bindings = vec![
-          open_lt,
-          parens(generics_bindings),
-          close_gt,
-        ];
+        generics_bindings.push(close_gt);
         break;
       }
 
@@ -322,17 +317,17 @@ pub(crate) fn parse_generics(
             // ConstParam →
             //   const IDENTIFIER : Type
             //     ( = BlockExpression | IDENTIFIER | -? LiteralExpression )?
-
             generics_bindings.push(param_start); // const
             let const_ident = input.next()?; // IDENTIFIER
             type_tokens.push(const_ident.clone()); // IDENTIFIER
             generics_bindings.push(const_ident); // IDENTIFIER
-            generics_bindings.push(input.next()?); // :
+            generics_bindings.push(input.next()?); // ':'
 
             // Type
             parse_typelike(input, &mut generics_bindings, |input| {
               input.peek_puncts(0, &[b"=", b",", b">"]).is_some()
             })?;
+
             if input.peek_punct(0, b"=") {
               input.next()?; // '='
               let const_value = input.next()?;
@@ -401,12 +396,20 @@ pub(crate) fn parse_generics(
       }
       if input.peek_punct(0, b",") {
         let comma = input.next()?; // ','
-        generics_bindings.push(comma.clone());
-        type_tokens.push(comma);
+        type_tokens.push(comma.clone());
+        generics_bindings.push(comma);
       }
     }
   }
-  Ok((type_tokens, generics_bindings))
+  // Derive generics_inner by stripping the `<` and `>` from generics_bindings,
+  // rather than the other way around, to preserve the original source spans on
+  // the `<`/`>` tokens for better error diagnostics.
+  let generics_inner = if generics_bindings.len() > 2 {
+    generics_bindings[1..generics_bindings.len() - 1].to_vec()
+  } else {
+    Vec::new()
+  };
+  Ok((type_tokens, generics_bindings, generics_inner))
 }
 
 pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
@@ -426,8 +429,14 @@ pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
     // TODO: attrs.
     skip_outer_attributes(&mut input)?;
     parse_visibility(&mut input, &mut result);
-    let field_name = input.next()?; // IDENTIFIER
-    let field_name_ident = Ident::new(&format!("field__{}", field_name), Span::call_site());
+
+    // IDENTIFIER
+    let field_name = input.next()?;
+    // Handle `r#` raw identifiers, for example `r#if` -> `f_if`.
+    let field_name_str = field_name.to_string();
+    let stripped = field_name_str.strip_prefix("r#").unwrap_or(&field_name_str);
+    let field_name_ident = Ident::new(&format!("f_{}", stripped), Span::call_site());
+
     result.push(TokenTree::Ident(field_name_ident)); // $fieldnameident:ident
     result.push(punct('@')); // @
     result.push(field_name); // $fieldname:tt
@@ -466,7 +475,7 @@ pub(crate) fn parse_unnamed_fields(input: TokenStream) -> Result<Vec<TokenTree>>
     // TODO: attrs.
     skip_outer_attributes(&mut input)?;
     parse_visibility(&mut input, &mut result);
-    let field_name_ident = Ident::new(&format!("field__{}", field_index), Span::call_site());
+    let field_name_ident = Ident::new(&format!("tuple_field_{}", field_index), Span::call_site());
     result.push(TokenTree::Ident(field_name_ident)); // $fieldnameident:ident
     result.push(punct('@')); // @
     result.push(TokenTree::Literal(Literal::usize_unsuffixed(field_index))); // $fieldname:tt

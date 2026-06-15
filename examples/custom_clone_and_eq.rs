@@ -17,7 +17,7 @@ pub trait CustomClone {
 macro_rules! CustomEq {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
+    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -28,7 +28,7 @@ macro_rules! CustomEq {
     }
   ) => {
     with_spans! {
-      impl $(< $($generics_bindings)* >)? $crate::CustomEq for $ty where
+      impl $($generics_bindings)* $crate::CustomEq for $ty where
         $($generics_where)*
         $(
           $(
@@ -64,7 +64,7 @@ macro_rules! CustomEq {
 macro_rules! CustomClone {
   (
     ($( ($($attr:tt)*) )*)
-    $vis:vis $tystyle:ident $name:ident ($ty:ty) $(< ($($generics_bindings:tt)*) >)? where ($($generics_where:tt)*) {
+    $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
@@ -75,7 +75,7 @@ macro_rules! CustomClone {
     }
   ) => {
     with_spans! {
-      impl $(< $($generics_bindings)* >)? $crate::CustomClone for $ty where
+      impl $($generics_bindings)* $crate::CustomClone for $ty where
         $($generics_where)*
         $(
           $(
@@ -227,8 +227,21 @@ impl CustomClone for u16 {
   fn custom_clone(&self) -> Self { *self }
 }
 
+// Raw-identifier fields (e.g. `r#if`, `r#loop`) must work. Exercises the
+// `f_<name>` field binding (the `r#` prefix is stripped when forming the
+// binding identifier).
+#[allow(dead_code)]
+#[rules_derive(CustomEq, CustomClone)]
+pub struct RawIdentStruct {
+  pub r#if: u8,
+  pub r#loop: u16,
+}
+
 fn main() {
   assert!(DiscriminantEnum::A
     .custom_clone()
     .custom_eq(&DiscriminantEnum::A));
+
+  let raw = RawIdentStruct { r#if: 7, r#loop: 9 };
+  assert!(raw.custom_eq(&raw.custom_clone()));
 }
