@@ -1,10 +1,10 @@
 //! This library allows you to define custom deriving instances using
 //! `macro_rules!` macros rather than proc-macros. This is often much simpler.
-//! 
+//!
 //! # Getting started
-//! 
+//!
 //! Define a deriving macro with `macro_rules!()`:
-//! 
+//!
 //! ```ignore
 //! macro_rules! MyTrait {
 //!   (/* see `rules_derive` for definition of signature */) => {
@@ -15,55 +15,68 @@
 //!   }
 //! }
 //! ```
-//! 
+//!
 //! Then use it under the `rules_derive` attribute:
-//! 
+//!
 //! ```ignore
 //! #[rules_derive(MyTrait)]
 //! struct MyType { x: u32, y: String }
 //! ```
-//! 
+//!
 //! The macro definition can be in the same crate or file as its use.
-//! 
+//!
 //! See full examples [in the `examples` directory](https://github.com/MatX-inc/rules_derive/tree/main/examples).
-//! 
+//!
 //! # Tutorial
-//! 
+//!
 //! See the [announcement blog post](http://matx.com/research/rules_derive) for a tutorial.
-//! 
+//!
 //! # Parsed syntax
-//! 
-//! The `rules_derive` macro parses any `enum`/`struct` definition into a simpler-to-parse format, which it then
-//! passes to your macro. The primary transformations it does are:
-//! 
-//! * Convert all enum/struct syntaxes and named-field/unnamed-field/unit syntaxes into a uniform sum-of-products
-//!   syntax.
-//! * Convert any generic parameters in the typical ways needed for `impl` headers.
-//! 
+//!
+//! The `rules_derive` macro parses any `enum`/`struct` definition into a
+//! simpler-to-parse format, which it then passes to your macro. The primary
+//! transformations it does are:
+//!
+//! * Convert all enum/struct syntaxes and named-field/unnamed-field/unit
+//!   syntaxes into a uniform sum-of-products syntax.
+//! * Convert any generic parameters in the typical ways needed for `impl`
+//!   headers.
+//!
 //! The motivation for these transformations is given in the [announcement blog post](http://matx.com/research/rules_derive).
 //! Here is an example of the effect of this transformation:
-//! 
+//!
 //! ```ignore
 //! // Rust type definition:
 //! #[rustfmt::skip]
-//! pub enum Foo<T: Clone = u8> where u8: Into<T> { 
+//! pub enum Foo<T: Clone = u8> where u8: Into<T> {
 //!     A { x: T },
 //!     B,
 //!     C(u8),
 //! }
-//! 
+//!
 //! // rules_derive-transformed type definition:
-//! ((#[rustfmt::skip])) 
-//! pub enum Foo((Foo<T>) (<T: Clone>) where (u8: Into<T>,))
+//! ((#[rustfmt::skip]))
+//! pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 //! {
-//!     A(named Foo::A) { field__x @ x : T, } 
-//!     B(unit Foo::B) {}
-//!     C(unnamed Foo::C) { field__0 @ 0 : u8, }
+//!     A (named Foo::A) { f_x @ x : T, }
+//!     B (unit Foo::B) {}
+//!     C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
 //! }
 //! ```
-//! 
-//! This transformed type definition is then passed to your macro. You can see the `macro_rules!` header
-//! that accepts this transformed type definition on the [`rules_derive`] documentation.
+//!
+//! The generics appear three times: `(Foo<T>)` for naming the type, `(<T:
+//! Clone>)` (`generics_bindings`, with the angle brackets) for `impl` headers,
+//! and `(T: Clone)` (`generics_inner`, without the angle brackets) for splicing
+//! extra parameters into an `impl`.
+//!
+//! This transformed type definition is then passed to your macro. You can see
+//! the `macro_rules!` header that accepts this transformed type definition on
+//! the [`rules_derive`] documentation.
+
+// `Span::join` (used by `spanned!` under the `nightly` feature to widen a span
+// across multiple tokens) is gated behind the unstable `proc_macro_span`
+// feature. Enable it only when the `nightly` feature is on.
+#![cfg_attr(feature = "nightly", feature(proc_macro_span))]
 
 use proc_macro::Delimiter;
 use proc_macro::Group;
@@ -82,7 +95,8 @@ use parsing::*;
 /// some of the repetitions (to specialize for a specific number of fields or
 /// variants) or specializing `$tystyle` to `struct` or `enum`.
 ///
-/// TODO: remove redundant parens around attr:tt.
+/// TODO: remove redundant parens around (a) attr:tt, (b) `ty, generics_bindings
+/// where generics_where`.
 ///
 /// The full protocol:
 ///
@@ -90,7 +104,7 @@ use parsing::*;
 /// macro_rules! Foo {
 ///   (
 ///     ($( ($($attr:tt)*) )*)
-///     $vis:vis $tystyle:ident $name:ident ($ty:ty) $( <( $($generics_bindings:tt)* )> )? where ($($generics_where:tt)*) {
+///     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
 ///       $(
 ///         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
 ///           $(
@@ -102,27 +116,25 @@ use parsing::*;
 ///   ) => { ... }
 /// }
 /// ```
-/// 
-/// Here is an example of a Rust type definition being transformed into this protocol:
-/// 
+///
 /// Here is an example of the effect of this transformation:
-/// 
+///
 /// ```ignore
 /// // Rust type definition:
 /// #[rustfmt::skip]
-/// pub enum Foo<T: Clone = u8> where u8: Into<T> { 
+/// pub enum Foo<T: Clone = u8> where u8: Into<T> {
 ///     A { x: T },
 ///     B,
 ///     C(u8),
 /// }
-/// 
+///
 /// // rules_derive-transformed type definition:
-/// ((#[rustfmt::skip])) 
-/// pub enum Foo(Foo<T>) <(T: Clone,)> where (u8: Into<T>,)
+/// ((#[rustfmt::skip]))
+/// pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 /// {
-///     A(named Foo::A) { field__x @ x : T, } 
-///     B(unit Foo::B) {}
-///     C(unnamed Foo::C) { field__0 @ 0 : u8, }
+///     A (named Foo::A) { f_x @ x : T, }
+///     B (unit Foo::B) {}
+///     C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
 /// }
 /// ```
 ///
@@ -247,7 +259,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
   description.push(type_name.clone());
 
   // GenericParams?
-  let (ty, generics_bindings) = parse_generics(&mut item, &type_name)?;
+  let (ty, generics_bindings, generics_inner) = parse_generics(&mut item, &type_name)?;
 
   // StructStruct → ... WhereClause? ( {
   //   StructFields? } | ; )
@@ -271,7 +283,10 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
             // StructStruct → ... { StructFields? }
             let fields = parse_named_fields(group.stream())?;
             variants.push(type_name.clone());
-            variants.push(parens([with_span(group.span_open(), ident("named")), type_name.clone()]));
+            variants.push(parens([
+              with_span(group.span_open(), ident("named")),
+              type_name.clone(),
+            ]));
             variants.push(braces(fields));
           }
           TyStyle::Enum => {
@@ -378,7 +393,10 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
           //   )*
           // }
           variants.push(type_name.clone()); // $variant_name
-          variants.push(parens([with_span(group.span_open(), ident("unnamed")), type_name.clone()]));
+          variants.push(parens([
+            with_span(group.span_open(), ident("unnamed")),
+            type_name.clone(),
+          ]));
           variants.push(braces(parse_unnamed_fields(group.stream())?));
           parse_where_clause(&mut item, &mut generics_where)?;
           item.next()?; // ';'
@@ -394,15 +412,21 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
       }
       // Unit struct.
       variants.push(type_name.clone()); // $variant_name
-      variants.push(parens([with_span(punct.span(), ident("unit")), type_name.clone()]));
+      variants.push(parens([
+        with_span(punct.span(), ident("unit")),
+        type_name.clone(),
+      ]));
       variants.push(braces([]));
     }
     _ => return item.error(&"Parse error"),
   }
-  description.push(parens(ty));
-  description.extend(generics_bindings);
-  description.push(ident("where"));
-  description.push(parens(generics_where));
+  description.push(parens([
+    parens(ty),
+    parens(generics_bindings),
+    parens(generics_inner),
+    ident("where"),
+    parens(generics_where),
+  ]));
   description.push(braces(variants));
 
   // Parse `#[rules_derive(Foo(...), Bar)]` attribute.
@@ -446,7 +470,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
 }
 
 /// Creates an identifier from the concatenation of identifiers and literals.
-/// 
+///
 /// For example, `make_ident!(foo, "bar", 123)` becomes `foobar123`.
 #[proc_macro]
 pub fn make_ident(item: TokenStream) -> TokenStream { render_macro_result(make_ident_inner(item)) }
@@ -478,7 +502,8 @@ fn make_ident_inner(item: TokenStream) -> Result<TokenStream> {
 ///
 /// Within the scope of an outer `with_spans!(...)` invocation, you may use
 /// `spanned!(foo => tokens...)` to cause the `tokens...` to be annotated with
-/// the source location attached to `foo`. The `foo` must be a single token-tree.
+/// the source location attached to `foo`. The `foo` must be a single
+/// token-tree.
 ///
 /// The most common use case is to attribute missing instances in a
 /// `rules_derive` macro to a particular field of the source type. For this use
@@ -548,7 +573,12 @@ fn process_stream(
                     // Multiple tokens inside. Use them to set the span and then stop recursing.
                     #[cfg(feature = "nightly")]
                     {
-                      inner_span = first.span().join(last.span());
+                      // `Span::join` returns `None` when the two spans are in
+                      // different source files; fall back to the first span.
+                      inner_span = first
+                        .span()
+                        .join(last.span())
+                        .unwrap_or_else(|| first.span());
                     }
                     #[cfg(not(feature = "nightly"))]
                     {

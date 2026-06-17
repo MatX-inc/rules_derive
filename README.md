@@ -55,12 +55,12 @@ pub enum Foo<T: Clone = u8> where u8: Into<T> {
 }
 
 // rules_derive-transformed type definition:
-((#[rustfmt::skip])) 
-pub enum Foo((Foo<T>) (<T: Clone>) where (u8: Into<T>,))
+((#[rustfmt::skip]))
+pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 {
-    A(named Foo::A) { field__x @ x : T, } 
-    B(unit Foo::B) {}
-    C(unnamed Foo::C) { field__0 @ 0 : u8, }
+    A (named Foo::A) { f_x @ x : T, }
+    B (unit Foo::B) {}
+    C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
 }
 ```
 
