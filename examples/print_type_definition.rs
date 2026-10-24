@@ -8,6 +8,7 @@ macro_rules! PrintTypeDefinition {
     (
       $($t:tt)*
     ) => {
+        declare_used_attributes!(field(json::rename), variant(json::skip));
         const TYPE_DEFINITION: &str = std::stringify!($($t)*);
     }
 }
@@ -21,8 +22,9 @@ enum TupleEnum { Variant(u8, u16) }
 #[rules_derive(PrintTypeDefinition)]
 #[rustfmt::skip]
 pub enum Foo<T: Clone = u8> where u8: Into<T> { 
-    A { x: T },
-    #[rustfmt::skip]
+    A { #[t(json::rename(y))] x: T },
+    /// The B variant.
+    #[t(json::skip)]
     B,
     C(u8),
 }

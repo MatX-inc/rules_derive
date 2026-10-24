@@ -182,35 +182,156 @@ pub(crate) fn punct_joint(c: char) -> TokenTree {
   TokenTree::Punct(Punct::new(c, proc_macro::Spacing::Joint))
 }
 
-pub(crate) fn parse_item_attributes(
-  input: &mut ParseState,
-  result: &mut Vec<TokenTree>,
-) -> Result<TokenStream> {
-  // OuterAttribute*
-  let mut rules_derive_args = None;
-  while input.peek_punct(0, b"#") {
-    // OuterAttribute → # [ Attr ]
-    let pound = input.must_next(); // '#'
-    let TokenTree::Group(brackets) = input.next()? else {
-      return input.error(&"Expected [...]");
-    };
-    let mut inner_stream = ParseState::new(brackets.stream().into_iter());
-    if rules_derive_args.is_none() && inner_stream.peek_ident(0, "__rules_derive") {
-      inner_stream.must_next();
-      let args = inner_stream.next()?;
-      let TokenTree::Group(args) = args else {
-        return input.error(&"Expected (...)");
-      };
-      rules_derive_args = Some(args.stream());
-      // Drop this #[__rules_derive(...)] attribute.
-    } else {
-      result.push(parens([pound, TokenTree::Group(brackets)]));
+/// Where a `#[t(...)]` attribute was written.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum AttrCategory {
+  Container,
+  Variant,
+  Field,
+}
+
+impl AttrCategory {
+  pub(crate) fn name(self) -> &'static str {
+    match self {
+      AttrCategory::Container => "container",
+      AttrCategory::Variant => "variant",
+      AttrCategory::Field => "field",
     }
   }
-  let Some(rules_derive_args) = rules_derive_args else {
-    return input.error(&"Could not find internal #[__rules_derive(...)] attribute");
-  };
-  Ok(rules_derive_args)
+
+  pub(crate) fn from_name(name: &str) -> Option<Self> {
+    match name {
+      "container" => Some(AttrCategory::Container),
+      "variant" => Some(AttrCategory::Variant),
+      "field" => Some(AttrCategory::Field),
+      _ => None,
+    }
+  }
+}
+
+/// One `path(args)` entry of a `#[t(...)]` attribute, recorded so that
+/// `declare_used_attributes!` can check that some deriver reads it.
+pub(crate) struct TAttr {
+  pub(crate) category: AttrCategory,
+  /// The path with `r#` prefixes removed and segments joined by `::`, e.g.
+  /// `json::rename`.
+  pub(crate) path: String,
+  /// The span of the path's last segment.
+  pub(crate) span: Span,
+}
+
+/// Parses `OuterAttribute*` into the attribute group passed to derivers:
+///
+/// ```text
+/// ( ( $( $path:path ($($args:tt)*), )* ) $( (#[$($attr:tt)*]) )* )
+/// ```
+///
+/// The first element collects the entries of every `#[t(...)]` attribute,
+/// each normalized to `path(args),` (`path(),` when written without
+/// arguments). The remaining elements are the other ("ordinary") attributes,
+/// each in its own parentheses, in source order.
+///
+/// On the container, the internal `#[__rules_derive(...)]` attribute is
+/// removed and its arguments are returned in `rules_derive_args`.
+pub(crate) fn parse_attributes(
+  input: &mut ParseState,
+  category: AttrCategory,
+  t_attrs: &mut Vec<TAttr>,
+  mut rules_derive_args: Option<&mut Option<TokenStream>>,
+) -> Result<TokenTree> {
+  let mut t_entries = Vec::new();
+  let mut ordinary = Vec::new();
+  // OuterAttribute → # [ Attr ]
+  while input.peek_punct(0, b"#") {
+    let pound = input.must_next(); // '#'
+    let brackets = match input.next()? {
+      TokenTree::Group(g) if g.delimiter() == Delimiter::Bracket => g,
+      _ => return input.error(&"expected #[...]"),
+    };
+    let mut inner = ParseState::new(brackets.stream().into_iter());
+    if let Some(args) = rules_derive_args.as_deref_mut() {
+      if args.is_none() && inner.peek_ident(0, "__rules_derive") {
+        inner.must_next();
+        let TokenTree::Group(group) = inner.next()? else {
+          return input.error(&"Expected (...)");
+        };
+        *args = Some(group.stream());
+        // Drop this #[__rules_derive(...)] attribute.
+        continue;
+      }
+    }
+    if inner.peek_ident(0, "t") {
+      let t = inner.must_next();
+      match inner.next() {
+        Ok(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis && inner.at_end() => {
+          parse_t_entries(g.stream(), category, &mut t_entries, t_attrs)?;
+        }
+        _ => return Err(Msg(t.span(), &"expected `#[t(path, path(args), ...)]`")),
+      }
+      continue;
+    }
+    ordinary.push(parens([pound, TokenTree::Group(brackets)]));
+  }
+  let mut result = vec![parens(t_entries)];
+  result.extend(ordinary);
+  Ok(parens(result))
+}
+
+/// Parses the contents of `#[t(...)]`: a comma-separated list of `path` or
+/// `path(args)`.
+fn parse_t_entries(
+  stream: TokenStream,
+  category: AttrCategory,
+  entries: &mut Vec<TokenTree>,
+  t_attrs: &mut Vec<TAttr>,
+) -> Result<()> {
+  let mut input = ParseState::new(stream.into_iter());
+  while !input.at_end() {
+    // Path → IDENTIFIER ( :: IDENTIFIER )*
+    let mut path = String::new();
+    let mut span;
+    loop {
+      let TokenTree::Ident(segment) = input.next()? else {
+        return input.error(&"expected an attribute path in `#[t(...)]`");
+      };
+      let segment_str = segment.to_string();
+      path.push_str(segment_str.strip_prefix("r#").unwrap_or(&segment_str));
+      span = segment.span();
+      entries.push(TokenTree::Ident(segment));
+      if input.peek_punct(0, b"::") {
+        input.copy(2, entries)?; // ::
+        path.push_str("::");
+        continue;
+      }
+      break;
+    }
+    // Arguments, normalized to parentheses.
+    match &input.peeks[0] {
+      Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => {
+        let TokenTree::Group(g) = input.must_next() else {
+          unreachable!()
+        };
+        entries.push(TokenTree::Group(g));
+      }
+      None => entries.push(with_span(span, parens([]))),
+      Some(TokenTree::Punct(p)) if p.as_char() == ',' => entries.push(with_span(span, parens([]))),
+      Some(_) => {
+        return input.error(&"expected `,` or `(...)` after an attribute path in `#[t(...)]`")
+      }
+    }
+    entries.push(punct(','));
+    t_attrs.push(TAttr {
+      category,
+      path,
+      span,
+    });
+    if input.peek_punct(0, b",") {
+      input.must_next(); // ','
+    } else if !input.at_end() {
+      return input.error(&"expected `,` in `#[t(...)]`");
+    }
+  }
+  Ok(())
 }
 
 pub(crate) fn parse_outer_attributes(
@@ -412,7 +533,10 @@ pub(crate) fn parse_generics(
   Ok((type_tokens, generics_bindings, generics_inner))
 }
 
-pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
+pub(crate) fn parse_named_fields(
+  input: TokenStream,
+  t_attrs: &mut Vec<TAttr>,
+) -> Result<Vec<TokenTree>> {
   // Input format:
   //
   // StructFields → StructField ( , StructField )* ,?
@@ -421,13 +545,18 @@ pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
   // Output format:
   //
   // $(
+  //   $field_attributes:tt
   //   $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
   // )*
   let mut input = ParseState::new(input.into_iter());
   let mut result = Vec::new();
   while !input.at_end() {
-    // TODO: attrs.
-    skip_outer_attributes(&mut input)?;
+    result.push(parse_attributes(
+      &mut input,
+      AttrCategory::Field,
+      t_attrs,
+      None,
+    )?); // $field_attributes:tt
     parse_visibility(&mut input, &mut result);
 
     // IDENTIFIER
@@ -457,7 +586,10 @@ pub(crate) fn parse_named_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
   Ok(result)
 }
 
-pub(crate) fn parse_unnamed_fields(input: TokenStream) -> Result<Vec<TokenTree>> {
+pub(crate) fn parse_unnamed_fields(
+  input: TokenStream,
+  t_attrs: &mut Vec<TAttr>,
+) -> Result<Vec<TokenTree>> {
   // Input format:
   //
   // TupleFields → TupleField ( , TupleField )* ,?
@@ -466,14 +598,19 @@ pub(crate) fn parse_unnamed_fields(input: TokenStream) -> Result<Vec<TokenTree>>
   // Output format:
   //
   // $(
+  //   $field_attributes:tt
   //   $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
   // )*
   let mut input = ParseState::new(input.into_iter());
   let mut result = Vec::new();
   let mut field_index = 0usize;
   while !input.at_end() {
-    // TODO: attrs.
-    skip_outer_attributes(&mut input)?;
+    result.push(parse_attributes(
+      &mut input,
+      AttrCategory::Field,
+      t_attrs,
+      None,
+    )?); // $field_attributes:tt
     parse_visibility(&mut input, &mut result);
     let field_name_ident = Ident::new(&format!("tuple_field_{}", field_index), Span::call_site());
     result.push(TokenTree::Ident(field_name_ident)); // $fieldnameident:ident
@@ -787,17 +924,4 @@ pub(crate) fn parse_expression(input: &mut ParseState, result: &mut Vec<TokenTre
       input.copy(1, result).unwrap();
     }
   }
-}
-
-pub(crate) fn skip_outer_attributes(input: &mut ParseState) -> Result<()> {
-  while input.peek_punct(0, b"#") {
-    input.next().unwrap(); // '#'
-    let Ok(TokenTree::Group(group)) = input.next() else {
-      return input.error(&"expected #[...]");
-    };
-    if group.delimiter() != proc_macro::Delimiter::Bracket {
-      return input.error(&"expected #[...]");
-    }
-  }
-  Ok(())
 }

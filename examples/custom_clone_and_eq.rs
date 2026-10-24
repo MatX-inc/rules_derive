@@ -16,11 +16,13 @@ pub trait CustomClone {
 
 macro_rules! CustomEq {
   (
-    ($( ($($attr:tt)*) )*)
+    $container_attributes:tt
     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
+        $variant_attributes:tt
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
+            $field_attributes:tt
             $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
           )*
         }
@@ -63,11 +65,13 @@ macro_rules! CustomEq {
 
 macro_rules! CustomClone {
   (
-    ($( ($($attr:tt)*) )*)
+    $container_attributes:tt
     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
+        $variant_attributes:tt
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
+            $field_attributes:tt
             $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
           )*
         }

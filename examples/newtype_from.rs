@@ -2,13 +2,16 @@ use rules_derive::rules_derive;
 
 macro_rules! NewtypeFrom {
   (
-    ($( ($($attr:tt)*) )*)
+    $container_attributes:tt
     $vis:vis struct $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
+      $variant_attributes:tt
       $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) {
           // We require the first field to be the main (nonzero-sized) field.
+          $main_field_attributes:tt
           $main_fieldvis:vis $main_fieldnameident:ident @ $main_fieldname:tt : $main_fieldty:ty,
           $(
               // We allow any number of zero-sized fields.
+              $empty_field_attributes:tt
               $empty_fieldvis:vis $empty_fieldnameident:ident @ $empty_fieldname:tt : $empty_fieldty:ty,
           )*
       }

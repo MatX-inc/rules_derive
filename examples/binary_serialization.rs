@@ -37,11 +37,13 @@ impl_integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 
 macro_rules! BinarySerializable {
   (
-    ($( ($($attr:tt)*) )*)
+    $container_attributes:tt
     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
+        $variant_attributes:tt
         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           $(
+            $field_attributes:tt
             $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
           )*
         }

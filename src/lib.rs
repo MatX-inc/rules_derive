@@ -49,22 +49,32 @@
 //! // Rust type definition:
 //! #[rustfmt::skip]
 //! pub enum Foo<T: Clone = u8> where u8: Into<T> {
-//!     A { x: T },
+//!     A { #[t(json::rename(y))] x: T },
+//!     /// The B variant.
+//!     #[t(json::skip)]
 //!     B,
 //!     C(u8),
 //! }
 //!
 //! // rules_derive-transformed type definition:
-//! ((#[rustfmt::skip]))
+//! (() (#[rustfmt::skip]))
 //! pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 //! {
-//!     A (named Foo::A) { f_x @ x : T, }
-//!     B (unit Foo::B) {}
-//!     C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
+//!     (()) A (named Foo::A) { ((json::rename(y),)) f_x @ x : T, }
+//!     ((json::skip(),) (#[doc = " The B variant."])) B (unit Foo::B) {}
+//!     (()) C (unnamed Foo::C) { (()) tuple_field_0 @ 0 : u8, }
 //! }
 //! ```
 //!
-//! The generics appear three times: `(Foo<T>)` for naming the type, `(<T:
+//! The container, every variant and every field carry an attribute group
+//! `( ($($t_entries)*) $( (#[$($attr)*]) )* )`. Its first element collects the
+//! entries of all `#[t(...)]` attributes, each normalized to `path(args),`; the
+//! remaining elements are the other attributes, each in its own parentheses. A
+//! struct's single variant has the empty group `(())`. Read `#[t(...)]` entries
+//! with [`attr_lookup!`], and declare the ones your deriver reads with
+//! `declare_used_attributes!` (see [`rules_derive`]).
+//!
+//!//! The generics appear three times: `(Foo<T>)` for naming the type, `(<T:
 //! Clone>)` (`generics_bindings`, with the angle brackets) for `impl` headers,
 //! and `(T: Clone)` (`generics_inner`, without the angle brackets) for splicing
 //! extra parameters into an `impl`.
@@ -95,19 +105,18 @@ use parsing::*;
 /// some of the repetitions (to specialize for a specific number of fields or
 /// variants) or specializing `$tystyle` to `struct` or `enum`.
 ///
-/// TODO: remove redundant parens around (a) attr:tt, (b) `ty, generics_bindings
-/// where generics_where`.
-///
 /// The full protocol:
 ///
 /// ```no_run
 /// macro_rules! Foo {
 ///   (
-///     ($( ($($attr:tt)*) )*)
+///     $container_attributes:tt
 ///     $vis:vis $tystyle:ident $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
 ///       $(
+///         $variant_attributes:tt
 ///         $variant_name:ident ($variant_style:ident $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
 ///           $(
+///             $field_attributes:tt
 ///             $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
 ///           )*
 ///         }
@@ -123,20 +132,57 @@ use parsing::*;
 /// // Rust type definition:
 /// #[rustfmt::skip]
 /// pub enum Foo<T: Clone = u8> where u8: Into<T> {
-///     A { x: T },
+///     A { #[t(json::rename(y))] x: T },
+///     /// The B variant.
+///     #[t(json::skip)]
 ///     B,
 ///     C(u8),
 /// }
 ///
 /// // rules_derive-transformed type definition:
-/// ((#[rustfmt::skip]))
+/// (() (#[rustfmt::skip]))
 /// pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 /// {
-///     A (named Foo::A) { f_x @ x : T, }
-///     B (unit Foo::B) {}
-///     C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
+///     (()) A (named Foo::A) { ((json::rename(y),)) f_x @ x : T, }
+///     ((json::skip(),) (#[doc = " The B variant."])) B (unit Foo::B) {}
+///     (()) C (unnamed Foo::C) { (()) tuple_field_0 @ 0 : u8, }
 /// }
 /// ```
+///
+/// # Attributes
+///
+/// Each attribute group (`$container_attributes`, `$variant_attributes`,
+/// `$field_attributes`) has the shape
+///
+/// ```text
+/// ( ( $( $path(args), )* ) $( (#[$($ordinary_attribute)*]) )* )
+/// ```
+///
+/// The first element collects the entries of every `#[t(...)]` attribute in
+/// source order, each normalized to `path(args),` (`path(),` for a key written
+/// without arguments, such as `#[t(json::skip)]`); one `#[t(...)]` may hold
+/// several comma-separated entries. The other elements are the remaining
+/// ("ordinary") attributes, including doc comments and any `#[repr(...)]` or
+/// `#[derive(...)]` written after `#[rules_derive(...)]`, each wrapped in
+/// parentheses. A struct's single variant has the empty group `(())`.
+///
+/// `#[t(...)]` is reserved for derivers: by convention each deriver uses its
+/// own first path segment (`json::`, `sb::`, ...). Look keys up with
+/// [`attr_lookup!`]; inside [`with_extra_macros!`] that works even in `where`
+/// clauses.
+///
+/// A deriver declares which keys it reads by calling, unqualified,
+///
+/// ```ignore
+/// declare_used_attributes!(field(json::rename, json::skip), variant(json::rename));
+/// ```
+///
+/// in item position of its expansion; the categories are `container`,
+/// `variant` and `field`. `#[rules_derive]` defines this macro ahead of the
+/// deriver calls, together with a never-called function per `#[t(...)]` key
+/// present on the type, spanned at the key. Declaring a key references its
+/// function, so a key that no deriver declares (such as a misspelling) is
+/// reported as an unused function pointing at the key.
 ///
 /// If parameters are provided to the rules_derive macro name in parentheses,
 /// square brackets, or curly braces (e.g. `rules_derive(Iterator(Item = (I, &'a
@@ -186,7 +232,7 @@ pub fn rules_derive(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[__rules_derive(...)]` to get the #[cfg(...)] attributes to resolve
 /// correctly.
 #[doc(hidden)]
-#[proc_macro_derive(__RulesDerive, attributes(__rules_derive))]
+#[proc_macro_derive(__RulesDerive, attributes(__rules_derive, t))]
 pub fn rules_derive_impl(item: TokenStream) -> TokenStream {
   render_macro_result(rules_derive_inner(item))
 }
@@ -206,14 +252,19 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
   //   )
   let mut item = ParseState::new(item.into_iter());
   let mut description = Vec::new();
-  let attr: TokenStream;
+  let mut t_attrs = Vec::new();
 
   // OuterAttribute*
-  {
-    let mut attrs = Vec::new();
-    attr = parse_item_attributes(&mut item, &mut attrs)?;
-    description.push(parens(attrs));
-  }
+  let mut rules_derive_args = None;
+  description.push(parse_attributes(
+    &mut item,
+    AttrCategory::Container,
+    &mut t_attrs,
+    Some(&mut rules_derive_args),
+  )?);
+  let Some(attr) = rules_derive_args else {
+    return item.error(&"Could not find internal #[__rules_derive(...)] attribute");
+  };
 
   // Visibility?
   parse_visibility(&mut item, &mut description);
@@ -281,7 +332,8 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
         proc_macro::Delimiter::Brace => match tystyle {
           TyStyle::Struct => {
             // StructStruct → ... { StructFields? }
-            let fields = parse_named_fields(group.stream())?;
+            let fields = parse_named_fields(group.stream(), &mut t_attrs)?;
+            variants.push(parens([parens([])])); // $variant_attributes
             variants.push(type_name.clone());
             variants.push(parens([
               with_span(group.span_open(), ident("named")),
@@ -297,7 +349,12 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
               // EnumItem →
               //   OuterAttribute* Visibility?
               //   IDENTIFIER ( EnumItemTuple | EnumItemStruct )? EnumItemDiscriminant?
-              skip_outer_attributes(&mut input_variants)?; // TODO: attributes
+              let variant_attributes = parse_attributes(
+                &mut input_variants,
+                AttrCategory::Variant,
+                &mut t_attrs,
+                None,
+              )?;
 
               // `Visibility?` is actually illegal here.
               let variant_name = input_variants.next()?; // IDENTIFIER
@@ -322,7 +379,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
                         punct(':'),
                         variant_name.clone(),
                       ]);
-                      let fields = braces(parse_unnamed_fields(enum_item.stream())?);
+                      let fields = braces(parse_unnamed_fields(enum_item.stream(), &mut t_attrs)?);
                       (variant_metadata, fields)
                     }
                     proc_macro::Delimiter::Brace => {
@@ -340,7 +397,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
                         punct(':'),
                         variant_name.clone(),
                       ]);
-                      let fields = braces(parse_named_fields(enum_item.stream())?);
+                      let fields = braces(parse_named_fields(enum_item.stream(), &mut t_attrs)?);
                       (variant_metadata, fields)
                     }
                     _ => {
@@ -372,6 +429,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
               //     $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
               //   )*
               // }
+              variants.push(variant_attributes);
               variants.push(variant_name);
               variants.push(variant_metadata);
               variants.extend(discriminant);
@@ -392,12 +450,13 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
           //     $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
           //   )*
           // }
+          variants.push(parens([parens([])])); // $variant_attributes
           variants.push(type_name.clone()); // $variant_name
           variants.push(parens([
             with_span(group.span_open(), ident("unnamed")),
             type_name.clone(),
           ]));
-          variants.push(braces(parse_unnamed_fields(group.stream())?));
+          variants.push(braces(parse_unnamed_fields(group.stream(), &mut t_attrs)?));
           parse_where_clause(&mut item, &mut generics_where)?;
           item.next()?; // ';'
         }
@@ -411,6 +470,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
         return item.error(&"Parse error");
       }
       // Unit struct.
+      variants.push(parens([parens([])])); // $variant_attributes
       variants.push(type_name.clone()); // $variant_name
       variants.push(parens([
         with_span(punct.span(), ident("unit")),
@@ -430,7 +490,7 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
   description.push(braces(variants));
 
   // Parse `#[rules_derive(Foo(...), Bar)]` attribute.
-  let mut derives = Vec::new();
+  let mut derives = used_attributes_prelude(&type_name, &t_attrs);
   let mut attr = ParseState::new(attr.into_iter());
   while !attr.at_end() {
     // macro_name ( ... ),
@@ -467,6 +527,369 @@ fn rules_derive_inner(item: TokenStream) -> Result<TokenStream> {
   }
 
   Ok(derives.into_iter().collect())
+}
+
+/// Emits the definitions that support `declare_used_attributes!`: one never-
+/// called function per distinct `#[t(...)]` key (named after the key and
+/// spanned at it), and a `declare_used_attributes!` macro, in scope for the
+/// derivers, which references the functions of the keys it declares. A key no
+/// deriver declares is thus reported as an unused function, pointing at the
+/// key.
+fn used_attributes_prelude(type_name: &TokenTree, t_attrs: &[TAttr]) -> Vec<TokenTree> {
+  let type_str = type_name.to_string();
+  let type_str = type_str.strip_prefix("r#").unwrap_or(&type_str).to_string();
+  let mut seen: Vec<(AttrCategory, &str)> = Vec::new();
+  let mut result = Vec::new();
+  let mut entries = Vec::new();
+  for attr in t_attrs {
+    if seen.contains(&(attr.category, attr.path.as_str())) {
+      continue;
+    }
+    seen.push((attr.category, attr.path.as_str()));
+    let fn_name = Ident::new(
+      &format!(
+        "unused_{}_attribute_{}_on_{}",
+        attr.category.name(),
+        attr.path.replace("::", "__"),
+        type_str
+      ),
+      attr.span,
+    );
+    // #[allow(non_snake_case)] fn NAME() {}
+    //
+    // The whole item carries the key's span: rustc does not report dead code
+    // in items whose span comes from a macro expansion.
+    result.extend(
+      [
+        punct('#'),
+        brackets([ident("allow"), parens([ident("non_snake_case")])]),
+        ident("fn"),
+        TokenTree::Ident(fn_name.clone()),
+        parens([]),
+        braces([]),
+      ]
+      .map(|t| with_span(attr.span, t)),
+    );
+    entries.push(parens([
+      ident(attr.category.name()),
+      string(&attr.path),
+      TokenTree::Ident(fn_name),
+    ]));
+  }
+  // #[allow(unused_macros)]
+  // macro_rules! declare_used_attributes {
+  //   ($($declarations:tt)*) => {
+  //     ::rules_derive::__declare_used_attributes! { [ENTRIES] $($declarations)*
+  // }   };
+  // }
+  let body = if entries.is_empty() {
+    braces([])
+  } else {
+    braces([
+      punct_joint(':'),
+      punct(':'),
+      ident("rules_derive"),
+      punct_joint(':'),
+      punct(':'),
+      ident("__declare_used_attributes"),
+      punct('!'),
+      braces([
+        brackets(entries),
+        punct('$'),
+        parens([punct('$'), ident("declarations")]),
+        punct('*'),
+      ]),
+    ])
+  };
+  result.extend([
+    punct('#'),
+    brackets([ident("allow"), parens([ident("unused_macros")])]),
+    ident("macro_rules"),
+    punct('!'),
+    ident("declare_used_attributes"),
+    braces([
+      parens([
+        punct('$'),
+        parens([punct('$'), ident("declarations"), punct(':'), ident("tt")]),
+        punct('*'),
+      ]),
+      punct_joint('='),
+      punct('>'),
+      body,
+      punct(';'),
+    ]),
+  ]);
+  result
+}
+
+/// Internal: the expansion of `declare_used_attributes!` within a
+/// `#[rules_derive]` expansion.
+///
+/// Input: `[ $( ($category:ident $path:literal $fn_name:ident) )* ]` (the keys
+/// present on the type) followed by the deriver's declarations
+/// `$( $category:ident ( $($path:path),* ) ),*`. Output: a reference to the
+/// function of each present key that is declared, which marks it as used.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __declare_used_attributes(item: TokenStream) -> TokenStream {
+  render_macro_result(declare_used_attributes_inner(item))
+}
+
+fn declare_used_attributes_inner(item: TokenStream) -> Result<TokenStream> {
+  let mut input = ParseState::new(item.into_iter());
+  let TokenTree::Group(present) = input.next()? else {
+    return input.error(&"internal error: expected [...]");
+  };
+  let mut present_keys = Vec::new();
+  for entry in present.stream() {
+    let TokenTree::Group(entry) = entry else {
+      continue;
+    };
+    let mut it = entry.stream().into_iter();
+    let (Some(category), Some(path), Some(fn_name)) = (it.next(), it.next(), it.next()) else {
+      continue;
+    };
+    let path = path.to_string();
+    present_keys.push((
+      category.to_string(),
+      path.trim_matches('"').to_string(),
+      fn_name,
+    ));
+  }
+
+  let mut uses = Vec::new();
+  while !input.at_end() {
+    // $category ( $($path),* )
+    let category = input.next()?;
+    let category_str = category.to_string();
+    if AttrCategory::from_name(&category_str).is_none() {
+      return Err(Msg(
+        category.span(),
+        &"declare_used_attributes!: expected `container(...)`, `variant(...)` or `field(...)`",
+      ));
+    }
+    let TokenTree::Group(paths) = input.next()? else {
+      return Err(Msg(
+        category.span(),
+        &"declare_used_attributes!: expected `(path, ...)` after the category",
+      ));
+    };
+    let mut paths = ParseState::new(paths.stream().into_iter());
+    while !paths.at_end() {
+      let mut path = String::new();
+      while !paths.at_end() && !paths.peek_punct(0, b",") {
+        let t = paths.must_next();
+        let t = t.to_string();
+        path.push_str(t.strip_prefix("r#").unwrap_or(&t));
+      }
+      if paths.peek_punct(0, b",") {
+        paths.must_next();
+      }
+      for (present_category, present_path, fn_name) in &present_keys {
+        if *present_category == category_str && *present_path == path {
+          // let _ = fn_name;
+          uses.extend([
+            ident("let"),
+            ident("_"),
+            punct('='),
+            fn_name.clone(),
+            punct(';'),
+          ]);
+        }
+      }
+    }
+    if input.peek_punct(0, b",") {
+      input.must_next();
+    }
+  }
+  if uses.is_empty() {
+    return Ok(TokenStream::new());
+  }
+  // const _: () = { USES };
+  Ok(
+    [
+      ident("const"),
+      ident("_"),
+      punct(':'),
+      parens([]),
+      punct('='),
+      braces(uses),
+      punct(';'),
+    ]
+    .into_iter()
+    .collect(),
+  )
+}
+
+/// Looks up a `#[t(...)]` attribute in an attribute group produced by
+/// `#[rules_derive]` (`$container_attributes`, `$variant_attributes` or
+/// `$field_attributes`), and expands to one of two token sequences depending on
+/// whether it is present:
+///
+/// ```ignore
+/// attr_lookup!(
+///   $field_attributes,
+///   json::rename,
+///   (@name) => (/* present: `@name` is replaced by the attribute's arguments */),
+///   () => (/* absent */),
+/// )
+/// ```
+///
+/// For `#[t(json::rename(userName))]` the first arm expands with `@name`
+/// replaced by `userName`; for an attribute written without arguments
+/// (`#[t(json::skip)]`) `@name` is replaced by nothing. The surrounding
+/// parentheses of the chosen arm's body are removed. If the attribute occurs
+/// more than once, the first occurrence is used.
+///
+/// `attr_lookup!` may be used wherever a macro call is allowed. Inside
+/// [`with_extra_macros!`] it may additionally be used anywhere, e.g. in a
+/// `where` clause.
+#[proc_macro]
+pub fn attr_lookup(item: TokenStream) -> TokenStream {
+  render_macro_result(attr_lookup_inner(item))
+}
+
+/// Strips `None`-delimited groups, which `macro_rules!` may wrap around
+/// substituted fragments.
+fn strip_invisible(mut t: TokenTree) -> TokenTree {
+  loop {
+    match &t {
+      TokenTree::Group(g) if g.delimiter() == Delimiter::None => {
+        let mut it = g.stream().into_iter();
+        match (it.next(), it.next()) {
+          (Some(inner), None) => t = inner,
+          _ => return t,
+        }
+      }
+      _ => return t,
+    }
+  }
+}
+
+fn path_string(tokens: impl IntoIterator<Item = TokenTree>) -> String {
+  let mut path = String::new();
+  for t in tokens {
+    match strip_invisible(t) {
+      TokenTree::Group(g) if g.delimiter() == Delimiter::None => {
+        path.push_str(&path_string(g.stream()));
+      }
+      t => {
+        let t = t.to_string();
+        path.push_str(t.strip_prefix("r#").unwrap_or(&t));
+      }
+    }
+  }
+  path
+}
+
+fn attr_lookup_inner(item: TokenStream) -> Result<TokenStream> {
+  let mut input = ParseState::new(item.into_iter());
+  let usage = &"expected `attr_lookup!($attributes, path, (@name) => (...), () => (...))`";
+
+  // $attributes
+  let attrs_span = input.span();
+  let TokenTree::Group(attrs) = strip_invisible(input.next()?) else {
+    return Err(Msg(attrs_span, usage));
+  };
+  if !input.peek_punct(0, b",") {
+    return input.error(usage);
+  }
+  input.must_next(); // ','
+
+  // path
+  let mut path_tokens = Vec::new();
+  while !input.at_end() && !input.peek_punct(0, b",") {
+    path_tokens.push(input.must_next());
+  }
+  let path = path_string(path_tokens);
+  if input.peek_punct(0, b",") {
+    input.must_next(); // ','
+  }
+
+  // The `#[t(...)]` entries: the first element of the attribute group. Also
+  // accept the entries group itself.
+  let mut attr_elems = attrs.stream().into_iter();
+  let entries = match attr_elems.next().map(strip_invisible) {
+    Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => g.stream(),
+    _ => attrs.stream(),
+  };
+
+  // Find `path (args),` among the entries.
+  let mut found: Option<TokenStream> = None;
+  {
+    let mut current_path = Vec::new();
+    for t in entries {
+      match strip_invisible(t) {
+        TokenTree::Group(g) if g.delimiter() == Delimiter::Parenthesis => {
+          if found.is_none() && path_string(current_path.drain(..)) == path {
+            found = Some(g.stream());
+          }
+          current_path.clear();
+        }
+        TokenTree::Punct(p) if p.as_char() == ',' => current_path.clear(),
+        t => current_path.push(t),
+      }
+    }
+  }
+
+  // Arms: (pattern) => (body), ...
+  while !input.at_end() {
+    let pattern_span = input.span();
+    let TokenTree::Group(pattern) = input.next()? else {
+      return Err(Msg(pattern_span, usage));
+    };
+    if !input.peek_punct(0, b"=>") {
+      return input.error(usage);
+    }
+    input.must_next(); // '='
+    input.must_next(); // '>'
+    let body_span = input.span();
+    let TokenTree::Group(body) = input.next()? else {
+      return Err(Msg(body_span, usage));
+    };
+    if input.peek_punct(0, b",") {
+      input.must_next(); // ','
+    }
+    let mut pattern = pattern.stream().into_iter();
+    match (pattern.next(), pattern.next(), pattern.next()) {
+      (None, None, None) => {
+        if found.is_none() {
+          return Ok(body.stream());
+        }
+      }
+      (Some(TokenTree::Punct(at)), Some(TokenTree::Ident(name)), None) if at.as_char() == '@' => {
+        if let Some(args) = &found {
+          return Ok(substitute(body.stream(), &name.to_string(), args));
+        }
+      }
+      _ => return Err(Msg(pattern_span, usage)),
+    }
+  }
+  Ok(TokenStream::new())
+}
+
+/// Replaces every `@name` in `body` (at any depth) with `value`.
+fn substitute(body: TokenStream, name: &str, value: &TokenStream) -> TokenStream {
+  let mut result = Vec::new();
+  let mut tokens = body.into_iter().peekable();
+  while let Some(t) = tokens.next() {
+    match t {
+      TokenTree::Punct(p)
+        if p.as_char() == '@'
+          && matches!(tokens.peek(), Some(TokenTree::Ident(i)) if i.to_string() == name) =>
+      {
+        tokens.next();
+        result.extend(value.clone());
+      }
+      TokenTree::Group(g) => {
+        let mut new = Group::new(g.delimiter(), substitute(g.stream(), name, value));
+        new.set_span(g.span());
+        result.push(TokenTree::Group(new));
+      }
+      t => result.push(t),
+    }
+  }
+  result.into_iter().collect()
 }
 
 /// Creates an identifier from the concatenation of identifiers and literals.
@@ -518,7 +941,19 @@ fn make_ident_inner(item: TokenStream) -> Result<TokenStream> {
 /// `with_spans!(... spanned!(...) ...)` approach allows us to work around this
 /// limitation.
 #[proc_macro]
-pub fn with_spans(item: TokenStream) -> TokenStream {
+pub fn with_spans(item: TokenStream) -> TokenStream { with_extra_macros(item) }
+
+/// Expands the macros `spanned!(...)` (see [`with_spans!`]) and
+/// `attr_lookup!(...)` (see [`attr_lookup!`]) anywhere within its input,
+/// including positions where Rust does not allow macro calls, such as `where`
+/// clauses and `impl` headers.
+///
+/// Only an unqualified `attr_lookup!(...)` is expanded here; a path-qualified
+/// one (`::rules_derive::attr_lookup!(...)`) is left for rustc to expand as an
+/// ordinary macro call. The expansion of an `attr_lookup!` is itself scanned
+/// for `spanned!` and `attr_lookup!`.
+#[proc_macro]
+pub fn with_extra_macros(item: TokenStream) -> TokenStream {
   let mut result = Vec::new();
   let result = process_stream(None, ParseState::new(item.into_iter()), &mut result)
     .map(|()| result.into_iter().collect());
@@ -605,6 +1040,20 @@ fn process_stream(
         }
       }
       return stream.error(&"spanned!() must match syntax spanned!($span:tt => ...)");
+    }
+    if stream.peek_ident(0, "attr_lookup")
+      && stream.peek_punct(1, b"!")
+      && stream.peek_group(2)
+      && !matches!(dst.last(), Some(TokenTree::Punct(p)) if p.as_char() == ':')
+    {
+      stream.must_next(); // attr_lookup
+      stream.must_next(); // !
+      let TokenTree::Group(group) = stream.must_next() else {
+        unreachable!()
+      };
+      let expanded = attr_lookup_inner(group.stream())?;
+      process_stream(span, ParseState::new(expanded.into_iter()), dst)?;
+      continue 'token_loop;
     }
     dst.push(process_tree(span, stream.must_next())?);
   }

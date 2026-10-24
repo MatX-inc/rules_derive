@@ -9,12 +9,14 @@ pub trait EnumFromString: Sized {
 
 macro_rules! EnumFromString {
   (
-    $attrs:tt
+    $container_attributes:tt
     $vis:vis /* require enum */ enum $name:ident (($ty:ty) ($($generics_bindings:tt)*) ($($generics_inner:tt)*) where ($($generics_where:tt)*)) {
       $(
+        $variant_attributes:tt
         $variant_name:ident (/* require unit variant */ unit $($qualified_variant:tt)*) $(= ($discriminant:expr))? {
           // We deliberately don't accept any fields. These matchers are elided:
           //   $(
+          //     $field_attributes:tt
           //     $fieldvis:vis $fieldnameident:ident @ $fieldname:tt : $fieldty:ty,
           //   )*
         }

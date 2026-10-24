@@ -48,21 +48,43 @@ Here is an example of the effect of this transformation:
 ```rust
 // Rust type definition:
 #[rustfmt::skip]
-pub enum Foo<T: Clone = u8> where u8: Into<T> { 
-    A { x: T },
+pub enum Foo<T: Clone = u8> where u8: Into<T> {
+    A { #[t(json::rename(y))] x: T },
+    /// The B variant.
+    #[t(json::skip)]
     B,
     C(u8),
 }
 
 // rules_derive-transformed type definition:
-((#[rustfmt::skip]))
+(() (#[rustfmt::skip]))
 pub enum Foo ((Foo<T>) (<T: Clone>) (T: Clone) where (u8: Into<T>,))
 {
-    A (named Foo::A) { f_x @ x : T, }
-    B (unit Foo::B) {}
-    C (unnamed Foo::C) { tuple_field_0 @ 0 : u8, }
+    (()) A (named Foo::A) { ((json::rename(y),)) f_x @ x : T, }
+    ((json::skip(),) (#[doc = " The B variant."])) B (unit Foo::B) {}
+    (()) C (unnamed Foo::C) { (()) tuple_field_0 @ 0 : u8, }
 }
 ```
+
+The container, every variant and every field carry an attribute group
+`( ($($t_entries)*) $( (#[$($attr)*]) )* )`. Its first element collects the
+entries of all `#[t(...)]` attributes, each normalized to `path(args),`; the
+remaining elements are the other attributes, each in its own parentheses. A
+struct's single variant has the empty group `(())`.
+
+# Attributes
+
+`#[t(...)]` is reserved for deriver-consumed attributes. Derivers namespace
+their keys by a category path, e.g. `#[t(json::rename(userName), json::skip)]`.
+
+* `attr_lookup!($field_attributes, json::rename, (@v) => (/* found: @v is the arguments */), () => (/* absent */))`
+  selects one of two expansions depending on whether a key is present.
+* `with_extra_macros! { ... }` expands `attr_lookup!` and `spanned!` anywhere in
+  its input, including `where` clauses, where Rust allows no macro calls.
+* `declare_used_attributes!(field(json::rename, json::skip), variant(json::rename))`,
+  called by a deriver, marks those keys as read. A key no deriver reads (e.g. the
+  typo `#[t(json::renmae(x))]`) is reported as an unused-function warning pointing at
+  the key.
 
 This transformed type definition is then passed to your macro. You can see the `macro_rules!` header
 that accepts this transformed type definition on the [`rules_derive`] documentation.
